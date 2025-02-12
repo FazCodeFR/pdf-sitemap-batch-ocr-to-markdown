@@ -2,6 +2,7 @@ import requests
 import xml.etree.ElementTree as ET
 from dotenv import load_dotenv
 import os
+import re
 from marker.converters.pdf import PdfConverter
 from marker.models import create_model_dict
 from marker.output import text_from_rendered
@@ -9,15 +10,15 @@ from marker.config.parser import ConfigParser
 import torch
 import time
 import multiprocessing
+import logging
+from datetime import datetime
 
+# Configuration du logging
+logging.basicConfig(filename='logs.log', level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Définir le nombre de workers et utiliser un seul GPU
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Utilise uniquement le GPU 0
-# torch.set_num_threads(1)  # Limiter à un seul worker
-# Définir NUM_DEVICES et NUM_WORKERS ici
-
-# os.environ['NUM_DEVICES'] = '1'  # Utiliser 1 GPU
-# os.environ['NUM_WORKERS'] = '1'  # Utiliser 1 worker
+start_time = time.time()
+torch.cuda.is_available = lambda: False  # Force l'utilisation du CPU
 
 # Charger les variables depuis .env
 load_dotenv()
@@ -28,6 +29,7 @@ DOWNLOAD_FOLDER = os.getenv("DOWNLOAD_FOLDER")
 MARKDOWN_FOLDER = os.getenv("MARKDOWN_FOLDER")
 
 if not all([SITEMAP_URL, LOCAL_SITEMAP_FILE, DOWNLOAD_FOLDER, MARKDOWN_FOLDER]):
+    logging.error("Certaines variables d'environnement sont manquantes.")
     raise ValueError("Certaines variables d'environnement sont manquantes.")
 
 # Création des dossiers nécessaires
@@ -39,7 +41,7 @@ def download_sitemap():
     if response.status_code == 200:
         return response.text
     else:
-        print("Erreur lors du téléchargement du sitemap.")
+        logging.error("Erreur lors du téléchargement du sitemap.")
         return None
 
 def parse_sitemap(xml_content):
@@ -71,25 +73,32 @@ def compare_sitemaps(old_pdfs, new_pdfs):
     return added, changed
 
 def download_pdf(url):
-    filename = os.path.join(DOWNLOAD_FOLDER, url.split("&ind=")[-1])
+    # Extraire le nom du fichier depuis l'URL
+    raw_filename = url.split("&ind=")[-1]
+
+    # Supprimer la partie numérique aléatoire avant "wpdm_"
+    clean_filename = re.sub(r"^\d+wpdm_", "", raw_filename)
+
+    filename = os.path.join(DOWNLOAD_FOLDER, clean_filename)
+
     response = requests.get(url, stream=True)
     if response.status_code == 200:
         with open(filename, "wb") as f:
             for chunk in response.iter_content(chunk_size=1024):
                 f.write(chunk)
-        print(f"Téléchargé : {filename}")
+        logging.info(f"Téléchargé : {filename}")
         return filename
     else:
-        print(f"Erreur lors du téléchargement de {url}")
+        logging.error(f"Erreur lors du téléchargement de {url}")
         return None
 
 def convert_pdf_to_markdown(pdf_path, source_url):
     # Configuration avec les options nécessaires
     config = {
-        "output_format": "markdown",          # Format de sortie 
+        "output_format": "markdown",          # Format de sortie
         "languages": "fr",                # Langue
         "disable_image_extraction": True, # Désactivation de l'extraction d'images
-        "force_ocr": True,                # Forcer l'OCR
+        # "force_ocr": True,                # Forcer l'OCR
     }
 
     # Génération du parser de configuration
@@ -105,7 +114,7 @@ def convert_pdf_to_markdown(pdf_path, source_url):
 
     # Conversion du fichier PDF
     rendered = converter(pdf_path)
-    
+
     # Extraction du texte rendu
     text, _, _ = text_from_rendered(rendered)
 
@@ -115,16 +124,14 @@ def convert_pdf_to_markdown(pdf_path, source_url):
         f.write(text)
         f.write(f"\n\n---\n\n**Source :** [{source_url}]({source_url})")
 
-    print(f"Converti en Markdown : {md_filename}")
+    logging.info(f"Converti en Markdown : {md_filename}")
     torch.cuda.empty_cache()
 
-
 def process_pdf(url, date):
-    print(f"Téléchargement et conversion : {url} (Ajouté/Modifié le {date})")
+    logging.info(f"Téléchargement et conversion : {url} (Ajouté/Modifié le {date})")
     pdf_path = download_pdf(url)
     if pdf_path:
         convert_pdf_to_markdown(pdf_path, url)
-        torch.cuda.empty_cache()
 
 def main():
     new_sitemap_content = download_sitemap()
@@ -138,7 +145,7 @@ def main():
 
     # Afficher le nombre de PDFs ajoutés ou modifiés
     total_pdfs = len(added) + len(changed)
-    print(f"{total_pdfs} PDF(s) vont être traités (Ajouté(s)/Modifié(s))")
+    logging.info(f"{total_pdfs} PDF(s) vont être traités (Ajouté(s)/Modifié(s))")
 
     # Utilisation de multiprocessing pour exécuter les tâches en parallèle
     processes = []
@@ -157,12 +164,11 @@ def main():
     for proc in processes:
         proc.join()
 
+    end_time = time.time()
+    execution_time = end_time - start_time
+    logging.info(f"Temps total d'exécution : {execution_time:.2f} secondes")
     save_sitemap(new_sitemap_content)
 
 if __name__ == "__main__":
     multiprocessing.set_start_method("spawn")  # Meilleure compatibilité entre OS
-    main()
-
-
-if __name__ == "__main__":
     main()
