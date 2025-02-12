@@ -162,25 +162,27 @@ def main():
 
     # Utilisation de multiprocessing pour exécuter les tâches en parallèle
     processes = []
-    for url, date in {**added, **changed}.items():
-        p = multiprocessing.Process(target=process_pdf, args=(url, date))
-        p.start()
-        processes.append(p)
+    try:
+        for url, date in {**added, **changed}.items():
+            p = multiprocessing.Process(target=process_pdf, args=(url, date))
+            p.start()
+            processes.append(p)
 
-        # Limiter le nombre de processus actifs pour éviter une surcharge mémoire
-        if len(processes) >= 2:  # Ajuste cette valeur selon ta mémoire GPU/CPU
-            for proc in processes:
-                proc.join()  # Attendre la fin des processus actifs
-            processes = []
-
-    # Assurer la fin des derniers processus restants
-    for proc in processes:
-        proc.join()
+            # Limiter le nombre de processus actifs pour éviter une surcharge mémoire
+            if len(processes) >= 2:  # Ajuste cette valeur selon ta mémoire GPU/CPU
+                for proc in processes:
+                    proc.join()  # Attendre la fin des processus actifs
+                processes = []
+    finally:
+        # Assurer la fin des derniers processus restants
+        for proc in processes:
+            proc.join()
 
     end_time = time.time()
     execution_time = end_time - start_time
     logging.info(f"Temps total d'exécution : {execution_time:.2f} secondes")
     save_sitemap(new_sitemap_content)
+
 
 if __name__ == "__main__":
     multiprocessing.set_start_method("spawn")  # Meilleure compatibilité entre OS
