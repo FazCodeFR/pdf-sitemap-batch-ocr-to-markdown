@@ -44,11 +44,14 @@ os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 os.makedirs(MARKDOWN_FOLDER, exist_ok=True)
 
 def download_sitemap():
-    response = requests.get(SITEMAP_URL)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
+    }
+    response = requests.get(SITEMAP_URL, headers=headers)
     if response.status_code == 200:
         return response.text
     else:
-        logging.error("Erreur lors du téléchargement du sitemap.")
+        logging.error(f"Erreur lors du téléchargement du sitemap. {response.status_code}")
         return None
 
 def parse_sitemap(xml_content):
