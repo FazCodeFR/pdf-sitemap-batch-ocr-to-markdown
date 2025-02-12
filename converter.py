@@ -14,8 +14,15 @@ import logging
 from datetime import datetime
 
 # Configuration du logging
-logging.basicConfig(filename='logs.log', level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+# Configuration du logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("logs.log"),  # Écriture dans un fichier
+        logging.StreamHandler()          # Affichage dans la console
+    ]
+)
 
 start_time = time.time()
 torch.cuda.is_available = lambda: False  # Force l'utilisation du CPU
