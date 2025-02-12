@@ -150,6 +150,7 @@ def main():
     end_time = time.time()
     execution_time = end_time - start_time
     logging.info(f"Temps total d'exécution : {execution_time:.2f} secondes")
+    logging.info("---")
     save_sitemap(new_sitemap_content)
 
 if __name__ == "__main__":
