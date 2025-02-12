@@ -9,11 +9,9 @@ from marker.output import text_from_rendered
 from marker.config.parser import ConfigParser
 import torch
 import time
-import multiprocessing
 import logging
 from datetime import datetime
 
-# Configuration du logging
 # Configuration du logging
 logging.basicConfig(
     level=logging.INFO,
@@ -83,12 +81,8 @@ def compare_sitemaps(old_pdfs, new_pdfs):
     return added, changed
 
 def download_pdf(url):
-    # Extraire le nom du fichier depuis l'URL
     raw_filename = url.split("&ind=")[-1]
-
-    # Supprimer la partie numérique aléatoire avant "wpdm_"
     clean_filename = re.sub(r"^\d+wpdm_", "", raw_filename)
-
     filename = os.path.join(DOWNLOAD_FOLDER, clean_filename)
 
     headers = {
@@ -106,7 +100,6 @@ def download_pdf(url):
         return None
 
 def convert_pdf_to_markdown(pdf_path, source_url):
-    # Configuration avec les options nécessaires
     config = {
         "output_format": "markdown",          # Format de sortie
         "languages": "fr",                # Langue
@@ -114,10 +107,7 @@ def convert_pdf_to_markdown(pdf_path, source_url):
         # "force_ocr": True,                # Forcer l'OCR
     }
 
-    # Génération du parser de configuration
     config_parser = ConfigParser(config)
-
-    # Création de l'objet PdfConverter avec la configuration et le modèle
     converter = PdfConverter(
         config=config_parser.generate_config_dict(),
         artifact_dict=create_model_dict(),
@@ -125,13 +115,9 @@ def convert_pdf_to_markdown(pdf_path, source_url):
         renderer=config_parser.get_renderer()
     )
 
-    # Conversion du fichier PDF
     rendered = converter(pdf_path)
-
-    # Extraction du texte rendu
     text, _, _ = text_from_rendered(rendered)
 
-    # Création du fichier Markdown
     md_filename = os.path.join(MARKDOWN_FOLDER, os.path.basename(pdf_path).replace(".pdf", ".md"))
     with open(md_filename, "w", encoding="utf-8") as f:
         f.write(text)
@@ -141,7 +127,7 @@ def convert_pdf_to_markdown(pdf_path, source_url):
     torch.cuda.empty_cache()
 
 def process_pdf(url, date):
-    logging.info(f"Téléchargement et conversion : {url} (Ajouté/Modifié le {date})")
+    logging.info(f"Traitement du PDF : {url} (Ajouté/Modifié le {date})")
     pdf_path = download_pdf(url)
     if pdf_path:
         convert_pdf_to_markdown(pdf_path, url)
@@ -155,35 +141,16 @@ def main():
     old_pdfs = load_local_sitemap()
 
     added, changed = compare_sitemaps(old_pdfs, new_pdfs)
-
-    # Afficher le nombre de PDFs ajoutés ou modifiés
     total_pdfs = len(added) + len(changed)
     logging.info(f"{total_pdfs} PDF(s) vont être traités (Ajouté(s)/Modifié(s))")
 
-    # Utilisation de multiprocessing pour exécuter les tâches en parallèle
-    processes = []
-    try:
-        for url, date in {**added, **changed}.items():
-            p = multiprocessing.Process(target=process_pdf, args=(url, date))
-            p.start()
-            processes.append(p)
-
-            # Limiter le nombre de processus actifs pour éviter une surcharge mémoire
-            if len(processes) >= 2:  # Ajuste cette valeur selon ta mémoire GPU/CPU
-                for proc in processes:
-                    proc.join()  # Attendre la fin des processus actifs
-                processes = []
-    finally:
-        # Assurer la fin des derniers processus restants
-        for proc in processes:
-            proc.join()
+    for url, date in {**added, **changed}.items():
+        process_pdf(url, date)
 
     end_time = time.time()
     execution_time = end_time - start_time
     logging.info(f"Temps total d'exécution : {execution_time:.2f} secondes")
     save_sitemap(new_sitemap_content)
 
-
 if __name__ == "__main__":
-    multiprocessing.set_start_method("spawn")  # Meilleure compatibilité entre OS
     main()
