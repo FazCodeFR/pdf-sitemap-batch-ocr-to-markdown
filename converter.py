@@ -11,6 +11,7 @@ import torch
 import time
 import logging
 from datetime import datetime
+from ftplib import FTP
 
 # Configuration du logging
 logging.basicConfig(
