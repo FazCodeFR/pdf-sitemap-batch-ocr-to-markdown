@@ -41,6 +41,17 @@ FTP_DIR = "/markdown"
 FAILED_PDF_LOG = "failed_pdfs.txt"
 
 
+def upload_to_ftp(file_path):
+    try:
+        with FTP(FTP_HOST) as ftp:
+            ftp.login(FTP_USER, FTP_PASS)
+            ftp.cwd(FTP_DIR)
+            with open(file_path, "rb") as f:
+                ftp.storbinary(f"STOR {os.path.basename(file_path)}", f)
+            logging.info(f"Upload réussi : {file_path} -> {FTP_DIR}")
+    except Exception as e:
+        logging.error(f"Échec de l'upload FTP : {e}")
+
 if not all([SITEMAP_URL, LOCAL_SITEMAP_FILE, DOWNLOAD_FOLDER, MARKDOWN_FOLDER, FTP_HOST, FTP_USER, FTP_PASS]):
     logging.error("Certaines variables d'environnement sont manquantes.")
     upload_to_ftp("logs.log")
@@ -108,18 +119,6 @@ def download_pdf(url):
     else:
         logging.error(f"Erreur lors du téléchargement de {url}")
         return None
-
-
-def upload_to_ftp(file_path):
-    try:
-        with FTP(FTP_HOST) as ftp:
-            ftp.login(FTP_USER, FTP_PASS)
-            ftp.cwd(FTP_DIR)
-            with open(file_path, "rb") as f:
-                ftp.storbinary(f"STOR {os.path.basename(file_path)}", f)
-            logging.info(f"Upload réussi : {file_path} -> {FTP_DIR}")
-    except Exception as e:
-        logging.error(f"Échec de l'upload FTP : {e}")
 
 
 def convert_pdf_to_markdown(pdf_path, source_url):
