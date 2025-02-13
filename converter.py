@@ -12,6 +12,8 @@ import time
 import logging
 from datetime import datetime
 from ftplib import FTP
+import psutil
+
 
 # Configuration du logging
 logging.basicConfig(
@@ -40,6 +42,10 @@ FTP_PASS = os.getenv("FTP_PASS")
 FTP_DIR = "/markdown"
 FAILED_PDF_LOG = "failed_pdfs.txt"
 
+def check_memory_usage():
+    mem = psutil.virtual_memory()
+    if mem.percent > 80:
+        logging.warning("Alerte : Mémoire très haute, risque d'arrêt du programme !")
 
 def upload_to_ftp(file_path):
     try:
@@ -155,6 +161,7 @@ def process_pdf(url, date):
     if pdf_path:
         try:
             convert_pdf_to_markdown(pdf_path, url)
+            check_memory_usage()
         except Exception as e:
             logging.error(f"Erreur lors du traitement du PDF {url}: {e}")
             # Enregistrer l'échec dans un fichier .txt
@@ -204,7 +211,7 @@ def main():
     logging.info("---")
     save_sitemap(new_sitemap_content)  # Mettre à jour le sitemap
     upload_to_ftp("logs.log")
-    os.system("shutdown -h now")  # Arrêt immédiat de la machine
+    #os.system("shutdown -h now")  # Arrêt immédiat de la machine
 
 if __name__ == "__main__":
     main()
