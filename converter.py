@@ -45,7 +45,7 @@ FAILED_PDF_LOG = "failed_pdfs.txt"
 def check_memory_usage():
     mem = psutil.virtual_memory()
     if mem.percent > 80:
-        logging.warning("Alerte : Mémoire très haute, risque d'arrêt du programme !")
+        logging.warning("Alerte Memoire tres haute risque d arret du programme!")
 
 def upload_to_ftp(file_path):
     try:
