@@ -37,6 +37,8 @@ FTP_HOST = os.getenv("FTP_HOST")
 FTP_USER = os.getenv("FTP_USER")
 FTP_PASS = os.getenv("FTP_PASS")
 FTP_DIR = "/markdown"
+FAILED_PDF_LOG = "failed_pdfs.txt"
+
 
 if not all([SITEMAP_URL, LOCAL_SITEMAP_FILE, DOWNLOAD_FOLDER, MARKDOWN_FOLDER, FTP_HOST, FTP_USER, FTP_PASS]):
     logging.error("Certaines variables d'environnement sont manquantes.")
@@ -151,7 +153,25 @@ def process_pdf(url, date):
     logging.info(f"Traitement du PDF : {url} (Ajouté/Modifié le {date})")
     pdf_path = download_pdf(url)
     if pdf_path:
-        convert_pdf_to_markdown(pdf_path, url)
+        try:
+            convert_pdf_to_markdown(pdf_path, url)
+        except Exception as e:
+            logging.error(f"Erreur lors du traitement du PDF {url}: {e}")
+            # Enregistrer l'échec dans un fichier .txt
+            with open(FAILED_PDF_LOG, "a", encoding="utf-8") as f:
+                f.write(f"{url} - {e}\n")
+    else:
+        logging.error(f"Erreur de téléchargement du PDF {url}")
+        # Enregistrer l'échec de téléchargement dans un fichier .txt
+        with open(FAILED_PDF_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{url} - Erreur de téléchargement\n")
+
+def load_failed_pdfs():
+    if os.path.exists(FAILED_PDF_LOG):
+        with open(FAILED_PDF_LOG, "r", encoding="utf-8") as f:
+            failed_urls = [line.split(" - ")[0] for line in f.readlines()]
+        return set(failed_urls)
+    return set()
 
 def main():
     new_sitemap_content = download_sitemap()
@@ -165,17 +185,24 @@ def main():
     total_pdfs = len(added) + len(changed)
     logging.info(f"{total_pdfs} PDF(s) vont être traités (Ajouté(s)/Modifié(s))")
 
-    for url, date in {**added, **changed}.items():
+    # Charger les PDFs échoués depuis le fichier
+    failed_pdfs = load_failed_pdfs()
+
+    # Exclure les PDFs échoués des PDFs à traiter
+    to_process = {url: date for url, date in {**added, **changed}.items() if url not in failed_pdfs}
+
+    for url, date in to_process.items():
         try:
             process_pdf(url, date)
         except Exception as e:
             logging.error(f"Erreur lors du traitement du PDF {url}: {e}")
 
+    # Mettre à jour le sitemap avec uniquement les PDFs traités
     end_time = time.time()
     execution_time = end_time - start_time
     logging.info(f"Temps total d'exécution : {execution_time:.2f} secondes")
     logging.info("---")
-    save_sitemap(new_sitemap_content)
+    save_sitemap(new_sitemap_content)  # Mettre à jour le sitemap
     upload_to_ftp("logs.log")
     os.system("shutdown -h now")  # Arrêt immédiat de la machine
 
