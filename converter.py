@@ -17,7 +17,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("logs.log"),  # Écriture dans un fichier
+        logging.FileHandler("logs.log", mode="a")
         logging.StreamHandler()          # Affichage dans la console
     ]
 )
@@ -32,9 +32,16 @@ SITEMAP_URL = os.getenv("SITEMAP_URL")
 LOCAL_SITEMAP_FILE = os.getenv("LOCAL_SITEMAP_FILE")
 DOWNLOAD_FOLDER = os.getenv("DOWNLOAD_FOLDER")
 MARKDOWN_FOLDER = os.getenv("MARKDOWN_FOLDER")
+# Informations FTP
+FTP_HOST = os.getenv("FTP_HOST")
+FTP_USER = os.getenv("FTP_USER")
+FTP_PASS = os.getenv("FTP_PASS")
+FTP_DIR = "/markdown"
 
-if not all([SITEMAP_URL, LOCAL_SITEMAP_FILE, DOWNLOAD_FOLDER, MARKDOWN_FOLDER]):
+if not all([SITEMAP_URL, LOCAL_SITEMAP_FILE, DOWNLOAD_FOLDER, MARKDOWN_FOLDER, FTP_HOST, FTP_USER, FTP_PASS]):
     logging.error("Certaines variables d'environnement sont manquantes.")
+    upload_to_ftp("logs.log")
+    os.system("shutdown -h now")  # Arrêt immédiat de la machine
     raise ValueError("Certaines variables d'environnement sont manquantes.")
 
 # Création des dossiers nécessaires
@@ -99,6 +106,19 @@ def download_pdf(url):
         logging.error(f"Erreur lors du téléchargement de {url}")
         return None
 
+
+def upload_to_ftp(file_path):
+    try:
+        with FTP(FTP_HOST) as ftp:
+            ftp.login(FTP_USER, FTP_PASS)
+            ftp.cwd(FTP_DIR)
+            with open(file_path, "rb") as f:
+                ftp.storbinary(f"STOR {os.path.basename(file_path)}", f)
+            logging.info(f"Upload réussi : {file_path} -> {FTP_DIR}")
+    except Exception as e:
+        logging.error(f"Échec de l'upload FTP : {e}")
+
+
 def convert_pdf_to_markdown(pdf_path, source_url):
     config = {
         "output_format": "markdown",          # Format de sortie
@@ -124,6 +144,7 @@ def convert_pdf_to_markdown(pdf_path, source_url):
         f.write(f"\n\n---\n\n**Source :** [{source_url}]({source_url})")
 
     logging.info(f"Converti en Markdown : {md_filename}")
+    upload_to_ftp(md_filename)
     torch.cuda.empty_cache()
 
 def process_pdf(url, date):
@@ -145,13 +166,18 @@ def main():
     logging.info(f"{total_pdfs} PDF(s) vont être traités (Ajouté(s)/Modifié(s))")
 
     for url, date in {**added, **changed}.items():
-        process_pdf(url, date)
+        try:
+            process_pdf(url, date)
+        except Exception as e:
+            logging.error(f"Erreur lors du traitement du PDF {url}: {e}")
 
     end_time = time.time()
     execution_time = end_time - start_time
     logging.info(f"Temps total d'exécution : {execution_time:.2f} secondes")
     logging.info("---")
     save_sitemap(new_sitemap_content)
+    upload_to_ftp("logs.log")
+    os.system("shutdown -h now")  # Arrêt immédiat de la machine
 
 if __name__ == "__main__":
     main()
