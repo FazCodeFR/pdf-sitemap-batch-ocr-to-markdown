@@ -13,6 +13,7 @@ import logging
 from datetime import datetime
 from ftplib import FTP
 import psutil
+import gc
 
 
 # Configuration du logging
@@ -129,10 +130,9 @@ def download_pdf(url):
 
 def convert_pdf_to_markdown(pdf_path, source_url):
     config = {
-        "output_format": "markdown",          # Format de sortie
-        "languages": "fr",                # Langue
-        "disable_image_extraction": True, # Désactivation de l'extraction d'images
-        # "force_ocr": True,                # Forcer l'OCR
+        "output_format": "markdown",
+        "languages": "fr",
+        "disable_image_extraction": True,
     }
 
     config_parser = ConfigParser(config)
@@ -154,6 +154,8 @@ def convert_pdf_to_markdown(pdf_path, source_url):
     logging.info(f"Converti en Markdown : {md_filename}")
     upload_to_ftp(md_filename)
     torch.cuda.empty_cache()
+    gc.collect()
+
 
 def process_pdf(url, date):
     logging.info(f"Traitement du PDF : {url} (Ajouté/Modifié le {date})")
@@ -181,6 +183,7 @@ def load_failed_pdfs():
     return set()
 
 def main():
+    logging.info("---")
     new_sitemap_content = download_sitemap()
     if not new_sitemap_content:
         return
@@ -208,9 +211,9 @@ def main():
     end_time = time.time()
     execution_time = end_time - start_time
     logging.info(f"Temps total d'exécution : {execution_time:.2f} secondes")
-    logging.info("---")
     save_sitemap(new_sitemap_content)  # Mettre à jour le sitemap
     upload_to_ftp("logs.log")
+    logging.info("---")
     #os.system("shutdown -h now")  # Arrêt immédiat de la machine
 
 if __name__ == "__main__":
