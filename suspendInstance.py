@@ -22,7 +22,7 @@ conn = openstack.connect(
 )
 
 # Obtenir la liste des instances
-instances = conn.compute.servers()
+instances = list(conn.compute.servers())
 
 # Vérifier s'il y a des instances
 if instances:
