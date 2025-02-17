@@ -1,4 +1,6 @@
 import os
+import time
+import subprocess
 import openstack
 
 # Charger les variables d'environnement depuis le fichier openrc.sh
@@ -26,16 +28,35 @@ instances = list(conn.compute.servers())
 
 # Vérifier s'il y a des instances
 if instances:
-    # Vérifier si l'instance est déjà en train de se shelver
     first_instance = instances[0]
-    
-    if first_instance.task_state == 'shelving':
-        print(f"Instance '{first_instance.name}' avec l'ID '{first_instance.id}' est déjà en cours de shelve.")
-    elif first_instance.status == 'SHELVED':
-        print(f"Instance '{first_instance.name}' avec l'ID '{first_instance.id}' est déjà shelvée.")
-    else:
-        # Shelver l'instance
-        conn.compute.shelve_server(first_instance.id)
-        print(f"Instance '{first_instance.name}' avec l'ID '{first_instance.id}' a été shelvée.")
+
+    # Shelver l'instance
+    conn.compute.shelve_server(first_instance.id)
+    print(f"Instance '{first_instance.name}' avec l'ID '{first_instance.id}' a été shelvée.")
+
+    # Forcer le offload immédiatement avec la commande CLI
+    try:
+        subprocess.run(
+            ["openstack", "server", "shelve", "--offload", first_instance.id],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        print(f"Commande shelve --offload exécutée avec succès pour '{first_instance.name}'.")
+    except subprocess.CalledProcessError as e:
+        print(f"Erreur lors de l'exécution de shelve --offload : {e.stderr}")
+        exit(1)
+
+    # Vérifier l'état jusqu'à atteindre SHELVED_OFFLOADED
+    while True:
+        instance = conn.compute.get_server(first_instance.id)
+        print(f"État actuel : {instance.status}")
+
+        if instance.status == "SHELVED_OFFLOADED":
+            print(f"Instance '{first_instance.name}' est maintenant en SHELVED_OFFLOADED.")
+            break
+
+        time.sleep(10)  # Vérifier toutes les 10 secondes
+
 else:
     print("Aucune instance trouvée.")
