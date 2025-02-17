@@ -14,6 +14,8 @@ from datetime import datetime
 from ftplib import FTP
 import psutil
 import gc
+import subprocess
+
 
 
 # Configuration du logging
@@ -43,10 +45,20 @@ FTP_PASS = os.getenv("FTP_PASS")
 FTP_DIR = "/markdown"
 FAILED_PDF_LOG = "failed_pdfs.txt"
 
+def suspendInstance():
+    try:
+        # Appel du script suspendInstance.py
+        result = subprocess.run(["python", "suspendInstance.py"], check=True, capture_output=True, text=True)
+        logging.info(f"Script suspendInstance exécuté avec succès : {result.stdout}")
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Erreur lors de l'exécution de suspendInstance.py : {e.stderr}")
+        suspendInstance()  # Réessayer en cas d'erreur
+
 def check_memory_usage():
     mem = psutil.virtual_memory()
     if mem.percent > 80:
         logging.warning("Alerte Memoire tres haute risque d arret du programme!")
+        upload_to_ftp("logs.log")
 
 def upload_to_ftp(file_path):
     try:
@@ -62,7 +74,7 @@ def upload_to_ftp(file_path):
 if not all([SITEMAP_URL, LOCAL_SITEMAP_FILE, DOWNLOAD_FOLDER, MARKDOWN_FOLDER, FTP_HOST, FTP_USER, FTP_PASS]):
     logging.error("Certaines variables d'environnement sont manquantes.")
     upload_to_ftp("logs.log")
-    os.system("shutdown -h now")  # Arrêt immédiat de la machine
+    suspendInstance()
     raise ValueError("Certaines variables d'environnement sont manquantes.")
 
 # Création des dossiers nécessaires
@@ -212,9 +224,9 @@ def main():
     execution_time = end_time - start_time
     logging.info(f"Temps total d'exécution : {execution_time:.2f} secondes")
     save_sitemap(new_sitemap_content)  # Mettre à jour le sitemap
-    upload_to_ftp("logs.log")
     logging.info("---")
-    #os.system("shutdown -h now")  # Arrêt immédiat de la machine
+    upload_to_ftp("logs.log")
+    suspendInstance()  # Suspendre l'instance après le traitement
 
 if __name__ == "__main__":
     main()
