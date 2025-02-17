@@ -26,10 +26,9 @@ instances = list(conn.compute.servers())
 
 # Vérifier s'il y a des instances
 if instances:
-    # Suspendre la première instance
+    # Shelver la première instance
     first_instance = instances[0]
-    conn.compute.suspend_server(first_instance.id)
-    print(f"Instance '{first_instance.name}' avec l'ID '{first_instance.id}' a été suspendue.")
-    # os.system("shutdown -h now")
+    conn.compute.shelve_server(first_instance.id)
+    print(f"Instance '{first_instance.name}' avec l'ID '{first_instance.id}' a été shelvée.")
 else:
     print("Aucune instance trouvée.")
