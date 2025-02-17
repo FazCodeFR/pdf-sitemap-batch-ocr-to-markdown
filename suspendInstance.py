@@ -26,9 +26,16 @@ instances = list(conn.compute.servers())
 
 # Vérifier s'il y a des instances
 if instances:
-    # Shelver la première instance
+    # Vérifier si l'instance est déjà en train de se shelver
     first_instance = instances[0]
-    conn.compute.shelve_server(first_instance.id)
-    print(f"Instance '{first_instance.name}' avec l'ID '{first_instance.id}' a été shelvée.")
+    
+    if first_instance.task_state == 'shelving':
+        print(f"Instance '{first_instance.name}' avec l'ID '{first_instance.id}' est déjà en cours de shelve.")
+    elif first_instance.status == 'SHELVED':
+        print(f"Instance '{first_instance.name}' avec l'ID '{first_instance.id}' est déjà shelvée.")
+    else:
+        # Shelver l'instance
+        conn.compute.shelve_server(first_instance.id)
+        print(f"Instance '{first_instance.name}' avec l'ID '{first_instance.id}' a été shelvée.")
 else:
     print("Aucune instance trouvée.")
