@@ -93,9 +93,8 @@ def read_markdown_content(pdf_url):
 def create_source(url, markdown_content):
     """Ajoute une nouvelle source avec l'URL et le contenu Markdown"""
     payload = {"url": url, "content": markdown_content}
-    logging.info(f"Envoi du JSON : {json.dumps(payload, indent=2)}")
     response = requests.post(f"{BASE_URL}/chatbot/{CHATBOT_ID}/sources", headers=HEADERS, json=payload)
-    logging.info(f"Réponse ({response.status_code}): {response.text}")
+    logging.info(f"Réponse ({response.status_code})")
     if response.status_code == 200:
         logging.info(f"Source ajoutée : {url}")
         return True
