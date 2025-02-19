@@ -74,7 +74,7 @@ def upload_to_ftp(file_path):
 if not all([SITEMAP_URL, LOCAL_SITEMAP_FILE, DOWNLOAD_FOLDER, MARKDOWN_FOLDER, FTP_HOST, FTP_USER, FTP_PASS]):
     logging.error("Certaines variables d'environnement sont manquantes.")
     upload_to_ftp("logs.log")
-    suspendInstance()
+    #suspendInstance()
     raise ValueError("Certaines variables d'environnement sont manquantes.")
 
 # Création des dossiers nécessaires
@@ -226,7 +226,7 @@ def main():
     save_sitemap(new_sitemap_content)  # Mettre à jour le sitemap
     logging.info("---")
     upload_to_ftp("logs.log")
-    suspendInstance()  # Suspendre l'instance après le traitement
+    #suspendInstance()  # Suspendre l'instance après le traitement
 
 if __name__ == "__main__":
     main()
