@@ -15,6 +15,8 @@ from ftplib import FTP
 import psutil
 import gc
 import subprocess
+import json
+from urllib.parse import 
 
 
 
@@ -44,6 +46,90 @@ FTP_USER = os.getenv("FTP_USER")
 FTP_PASS = os.getenv("FTP_PASS")
 FTP_DIR = "/markdown"
 FAILED_PDF_LOG = "failed_pdfs.txt"
+# Configuration pour chatwithAPI
+CHATBOT_ID = os.getenv("CHATBOT_ID")
+BEARER_TOKEN = os.getenv("BEARER_TOKEN")
+BASE_URL = os.getenv("BASE_URL")
+
+
+# Headers pour l'authentification
+HEADERS = {
+    "Authorization": f"Bearer {BEARER_TOKEN}",
+    "Accept": "application/json",
+    "Content-Type": "application/json"
+}
+
+
+def get_sources():
+    """Récupère toutes les sources du chatbot"""
+    response = requests.get(f"{BASE_URL}/chatbot/{CHATBOT_ID}/sources", headers=HEADERS)
+    if response.status_code == 200:
+        return response.json()
+    logging.error(f"Erreur {response.status_code} : {response.text}")
+    return None
+
+def find_source_by_keyword(sources, keyword):
+    """Recherche une source contenant un mot-clé dans son URL"""
+    return next((s for s in sources if keyword in s.get("url", "")), None)
+
+def delete_source(source_id):
+    """Supprime une source spécifique"""
+    response = requests.delete(f"{BASE_URL}/sources/{source_id}", headers=HEADERS)
+    if response.status_code in [200, 404]:  # On continue même si la source est introuvable
+        logging.info(f"Source supprimée ou introuvable : {source_id}")
+        return True
+    logging.error(f"Erreur {response.status_code} : {response.text}")
+    return False
+
+def read_markdown_content(pdf_url):
+    """Lit le contenu du fichier markdown correspondant au PDF"""
+    pdf_name = pdf_url.split("&ind=")[-1]  # Extraction correcte du nom du fichier
+    md_path = os.path.join(MARKDOWN_FOLDER, pdf_name.replace(".pdf", ".md"))
+    if os.path.exists(md_path):
+        with open(md_path, "r", encoding="utf-8") as file:
+            return file.read()
+    logging.warning(f"Fichier Markdown introuvable : {md_path}")
+    return ""
+
+def create_source(url, markdown_content):
+    """Ajoute une nouvelle source avec l'URL et le contenu Markdown"""
+    payload = {"url": url, "content": markdown_content}
+    logging.info(f"Envoi du JSON : {json.dumps(payload, indent=2)}")
+    response = requests.post(f"{BASE_URL}/chatbot/{CHATBOT_ID}/sources", headers=HEADERS, json=payload)
+    logging.info(f"Réponse ({response.status_code}): {response.text}")
+    if response.status_code == 200:
+        logging.info(f"Source ajoutée : {url}")
+        return True
+    logging.error(f"Erreur {response.status_code} : {response.text}")
+    return False
+
+def verify_source_added(keyword):
+    """Vérifie que la nouvelle source a bien été ajoutée"""
+    sources = get_sources()
+    if sources and find_source_by_keyword(sources, keyword):
+        logging.info("Vérification réussie : la source est bien présente")
+    else:
+        logging.error("Vérification échouée : la source n'a pas été ajoutée.")
+
+def process_chatbot_source(pdf_url):
+    pdf_name = pdf_url.split("&ind=")[-1]  # Extraction correcte du nom du fichier
+    sources = get_sources()
+    if not sources:
+        return logging.error("Impossible de récupérer les sources.")
+
+    source_to_reset = find_source_by_keyword(sources, pdf_name)
+    if source_to_reset:
+        source_id = source_to_reset["id"]
+        logging.info(f"Source trouvée : {source_id}")
+        if delete_source(source_id):
+            markdown_content = read_markdown_content(pdf_url)
+            if create_source(pdf_url, markdown_content):
+                verify_source_added(pdf_name)
+    else:
+        logging.warning("Aucune source trouvée, ajout d'une nouvelle source.")
+        markdown_content = read_markdown_content(pdf_url)
+        if create_source(pdf_url, markdown_content):
+            verify_source_added(pdf_name)
 
 def suspendInstance():
     try:
@@ -165,6 +251,7 @@ def convert_pdf_to_markdown(pdf_path, source_url):
 
     logging.info(f"Converti en Markdown : {md_filename}")
     upload_to_ftp(md_filename)
+    process_chatbot_source(source_url) 
     torch.cuda.empty_cache()
     gc.collect()
 
