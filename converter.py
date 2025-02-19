@@ -49,6 +49,15 @@ CHATBOT_ID = os.getenv("CHATBOT_ID")
 BEARER_TOKEN = os.getenv("BEARER_TOKEN")
 BASE_URL = os.getenv("BASE_URL")
 
+
+# Headers pour l'authentification du chatbot
+HEADERS = {
+    "Authorization": f"Bearer {BEARER_TOKEN}",
+    "Accept": "application/json",
+    "Content-Type": "application/json"
+}
+
+
 def suspendInstance():
     try:
         # Appel du script suspendInstance.py
@@ -203,11 +212,17 @@ def convert_pdf_to_markdown(pdf_path, source_url):
 
     logging.info(f"Converti en Markdown : {md_filename}")
     upload_to_ftp(md_filename)
-     # Après upload, envoyer l'URL et le contenu Markdown à l'API
-    markdown_content = read_markdown_content(source_url)
-    if create_source(source_url, markdown_content):
-        verify_source_added(source_url)
 
+    pdf_name = os.path.basename(pdf_path).replace(".pdf", "")
+    sources = get_sources()
+    source_to_reset = find_source_by_keyword(sources, pdf_name)
+    if source_to_reset:
+        source_id = source_to_reset["id"]
+        logging.info(f"🔍 Source trouvée : {source_id}")
+        if delete_source(source_id):
+            markdown_content = read_markdown_content(source_url)
+            if create_source(source_url, markdown_content):
+                verify_source_added(source_url)
     torch.cuda.empty_cache()
     gc.collect()
 
