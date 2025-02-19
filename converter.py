@@ -159,7 +159,7 @@ def upload_to_ftp(file_path):
 if not all([SITEMAP_URL, LOCAL_SITEMAP_FILE, DOWNLOAD_FOLDER, MARKDOWN_FOLDER, FTP_HOST, FTP_USER, FTP_PASS]):
     logging.error("Certaines variables d'environnement sont manquantes.")
     upload_to_ftp("logs.log")
-    #suspendInstance()
+    suspendInstance()
     raise ValueError("Certaines variables d'environnement sont manquantes.")
 
 # Création des dossiers nécessaires
@@ -243,10 +243,13 @@ def convert_pdf_to_markdown(pdf_path, source_url):
     rendered = converter(pdf_path)
     text, _, _ = text_from_rendered(rendered)
 
+    raw_filename = source_url.split("&ind=")[-1]
+    clean_title = raw_filename.replace("-", " ").replace(".pdf", "")
+
     md_filename = os.path.join(MARKDOWN_FOLDER, os.path.basename(pdf_path).replace(".pdf", ".md"))
     with open(md_filename, "w", encoding="utf-8") as f:
         f.write(text)
-        f.write(f"\n\n---\n\n**Source :** [{source_url}]({source_url})")
+        f.write(f"\n\n---\n\n**Source :** [{clean_title}]({source_url})")
 
     logging.info(f"Converti en Markdown : {md_filename}")
     upload_to_ftp(md_filename)
@@ -312,7 +315,7 @@ def main():
     save_sitemap(new_sitemap_content)  # Mettre à jour le sitemap
     logging.info("---")
     upload_to_ftp("logs.log")
-    #suspendInstance()  # Suspendre l'instance après le traitement
+    suspendInstance()  # Suspendre l'instance après le traitement
 
 if __name__ == "__main__":
     main()
