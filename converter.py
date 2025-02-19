@@ -16,8 +16,7 @@ import psutil
 import gc
 import subprocess
 import json
-from urllib.parse import 
-
+from urllib.parse import urlparse
 
 
 # Configuration du logging
