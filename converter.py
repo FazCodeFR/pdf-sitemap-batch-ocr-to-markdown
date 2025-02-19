@@ -44,19 +44,6 @@ FTP_USER = os.getenv("FTP_USER")
 FTP_PASS = os.getenv("FTP_PASS")
 FTP_DIR = "/markdown"
 FAILED_PDF_LOG = "failed_pdfs.txt"
-# Configuration IA
-CHATBOT_ID = os.getenv("CHATBOT_ID")
-BEARER_TOKEN = os.getenv("BEARER_TOKEN")
-BASE_URL = os.getenv("BASE_URL")
-
-
-# Headers pour l'authentification du chatbot
-HEADERS = {
-    "Authorization": f"Bearer {BEARER_TOKEN}",
-    "Accept": "application/json",
-    "Content-Type": "application/json"
-}
-
 
 def suspendInstance():
     try:
@@ -152,40 +139,6 @@ def download_pdf(url):
         logging.error(f"Erreur lors du téléchargement de {url}")
         return None
 
-def read_markdown_content(pdf_url):
-    pdf_name = pdf_url.split("&ind=")[-1]
-    md_path = os.path.join(MARKDOWN_FOLDER, pdf_name.replace(".pdf", ".md"))
-    if os.path.exists(md_path):
-        with open(md_path, "r", encoding="utf-8") as file:
-            return file.read()
-    logging.error(f"⚠️ Fichier Markdown introuvable : {md_path}")
-    return ""
-
-def create_source(url, markdown_content):
-    payload = {"url": url, "content": markdown_content}
-    # logging.info(f"🚀 Envoi du JSON : {json.dumps(payload, indent=2)}")
-    response = requests.post(f"{BASE_URL}/chatbot/{CHATBOT_ID}/sources", headers=HEADERS, json=payload)
-    # logging.info(f"📩 Réponse ({response.status_code}): {response.text}")
-    if response.status_code == 200:
-        logging.info(f"✅ Source ajoutée : {url}")
-        return True
-    logging.error(f"❌ Erreur {response.status_code} : {response.text}")
-    return False
-
-def verify_source_added(keyword):
-    sources = get_sources()
-    if sources and find_source_by_keyword(sources, keyword):
-        logging.info("✅ Vérification réussie : la source est bien présente.")
-    else:
-        logging.error("❌ Vérification échouée : la source n'a pas été ajoutée.")
-
-def get_sources():
-    response = requests.get(f"{BASE_URL}/chatbot/{CHATBOT_ID}/sources", headers=HEADERS)
-    if response.status_code == 200:
-        return response.json()
-    logging.error(f"❌ Erreur {response.status_code} : {response.text}")
-    return None
-
 
 def convert_pdf_to_markdown(pdf_path, source_url):
     config = {
@@ -212,17 +165,6 @@ def convert_pdf_to_markdown(pdf_path, source_url):
 
     logging.info(f"Converti en Markdown : {md_filename}")
     upload_to_ftp(md_filename)
-
-    pdf_name = os.path.basename(pdf_path).replace(".pdf", "")
-    sources = get_sources()
-    source_to_reset = find_source_by_keyword(sources, pdf_name)
-    if source_to_reset:
-        source_id = source_to_reset["id"]
-        logging.info(f"🔍 Source trouvée : {source_id}")
-        if delete_source(source_id):
-            markdown_content = read_markdown_content(source_url)
-            if create_source(source_url, markdown_content):
-                verify_source_added(source_url)
     torch.cuda.empty_cache()
     gc.collect()
 
