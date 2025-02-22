@@ -49,8 +49,6 @@ FAILED_PDF_LOG = "failed_pdfs.txt"
 CHATBOT_ID = os.getenv("CHATBOT_ID")
 BEARER_TOKEN = os.getenv("BEARER_TOKEN")
 BASE_URL = os.getenv("BASE_URL")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-
 
 # Headers pour l'authentification
 HEADERS = {
@@ -230,8 +228,6 @@ def convert_pdf_to_markdown(pdf_path, source_url):
         "output_format": "markdown",
         "languages": "fr",
         "disable_image_extraction": True,
-        "use_llm": True,  # Active l'amélioration via LLM
-        "llm_service": "marker.services.gemini.GoogleGeminiService",  # Choix du service LLM
     }
 
     config_parser = ConfigParser(config)
