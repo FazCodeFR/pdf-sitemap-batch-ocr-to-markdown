@@ -228,6 +228,7 @@ def convert_pdf_to_markdown(pdf_path, source_url):
         "output_format": "markdown",
         "languages": "fr",
         "disable_image_extraction": True,
+        "max_tasks_per_worker": 1
     }
 
     config_parser = ConfigParser(config)
