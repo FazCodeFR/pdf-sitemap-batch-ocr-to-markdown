@@ -318,7 +318,7 @@ def main():
     save_sitemap(new_sitemap_content)  # Mettre à jour le sitemap
     logging.info("---")
     upload_to_ftp("logs.log")
-    suspendInstance()  # Suspendre l'instance après le traitement
+    # suspendInstance()  # Suspendre l'instance après le traitement
 
 if __name__ == "__main__":
     main()
