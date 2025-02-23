@@ -304,7 +304,7 @@ def main():
     for url, date in to_process.items():
         try:
             process_pdf(url, date)
-            time.sleep(30)
+            time.sleep(5)
         except Exception as e:
             logging.error(f"Erreur lors du traitement du PDF {url}: {e}")
 
@@ -315,7 +315,7 @@ def main():
     save_sitemap(new_sitemap_content)  # Mettre à jour le sitemap
     logging.info("---")
     upload_to_ftp("logs.log")
-    # suspendInstance()  # Suspendre l'instance après le traitement
+    suspendInstance()  # Suspendre l'instance après le traitement
 
 if __name__ == "__main__":
     main()
