@@ -10,13 +10,12 @@ from marker.config.parser import ConfigParser
 import torch
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from ftplib import FTP
 import psutil
 import gc
 import subprocess
 import json
-from urllib.parse import urlparse
 
 
 # Configuration du logging
@@ -30,7 +29,7 @@ logging.basicConfig(
 )
 
 start_time = time.time()
-torch.cuda.is_available = lambda: False
+# torch.cuda.is_available = lambda: False  # Commenté - à activer seulement si nécessaire
 
 # Charger les variables depuis .env
 load_dotenv()
@@ -43,8 +42,8 @@ FTP_HOST = os.getenv("FTP_HOST")
 FTP_USER = os.getenv("FTP_USER")
 FTP_PASS = os.getenv("FTP_PASS")
 FTP_DIR = "/markdown"
-FAILED_PDF_LOG = "failed_pdfs.txt"
-PROCESSED_PDF_LOG = "processed_pdfs.json"  # Nouveau fichier pour tracker les PDFs traités
+FAILED_PDF_LOG = "failed_pdfs.json"  # Changé en JSON pour plus de flexibilité
+PROCESSED_PDF_LOG = "processed_pdfs.json"
 CHATBOT_ID = os.getenv("CHATBOT_ID")
 BEARER_TOKEN = os.getenv("BEARER_TOKEN")
 BASE_URL = os.getenv("BASE_URL")
@@ -103,28 +102,34 @@ def verify_source_added(keyword):
     sources = get_sources()
     if sources and find_source_by_keyword(sources, keyword):
         logging.info("Vérification réussie : la source est bien présente")
+        return True
     else:
         logging.error("Vérification échouée : la source n'a pas été ajoutée.")
+        return False
 
 def process_chatbot_source(pdf_url):
+    """Gère l'ajout/mise à jour de la source dans le chatbot"""
     pdf_name = pdf_url.split("&ind=")[-1]
     sources = get_sources()
     if not sources:
-        return logging.error("Impossible de récupérer les sources.")
+        raise Exception("Impossible de récupérer les sources.")
 
     source_to_reset = find_source_by_keyword(sources, pdf_name)
     if source_to_reset:
         source_id = source_to_reset["id"]
         logging.info(f"Source trouvée : {source_id}")
-        if delete_source(source_id):
-            markdown_content = read_markdown_content(pdf_url)
-            if create_source(pdf_url, markdown_content):
-                verify_source_added(pdf_name)
-    else:
-        logging.warning("Aucune source trouvée, ajout d'une nouvelle source.")
-        markdown_content = read_markdown_content(pdf_url)
-        if create_source(pdf_url, markdown_content):
-            verify_source_added(pdf_name)
+        if not delete_source(source_id):
+            raise Exception(f"Échec de suppression de la source {source_id}")
+    
+    markdown_content = read_markdown_content(pdf_url)
+    if not markdown_content:
+        raise Exception(f"Contenu Markdown vide pour {pdf_url}")
+    
+    if not create_source(pdf_url, markdown_content):
+        raise Exception(f"Échec de création de la source pour {pdf_url}")
+    
+    if not verify_source_added(pdf_name):
+        raise Exception(f"Source non vérifiée pour {pdf_url}")
 
 def suspendInstance():
     try:
@@ -150,8 +155,9 @@ def upload_to_ftp(file_path):
             logging.info(f"Upload réussi : {file_path} -> {FTP_DIR}")
     except Exception as e:
         logging.error(f"Échec de l'upload FTP : {e}")
+        raise
 
-# ============= NOUVELLES FONCTIONS POUR LE TRACKING =============
+# ============= FONCTIONS DE TRACKING =============
 
 def load_processed_pdfs():
     """Charge le dictionnaire des PDFs déjà traités avec leur date de traitement"""
@@ -179,9 +185,46 @@ def is_pdf_already_processed(url, current_date):
     """Vérifie si un PDF a déjà été traité avec cette date"""
     processed = load_processed_pdfs()
     if url in processed:
-        # Vérifier si la date est la même
         if processed[url].get("date") == current_date:
             return True
+    return False
+
+def load_failed_pdfs():
+    """Charge les PDFs échoués avec leur date d'échec"""
+    if os.path.exists(FAILED_PDF_LOG):
+        try:
+            with open(FAILED_PDF_LOG, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            logging.warning("Fichier failed_pdfs.json corrompu")
+            return {}
+    return {}
+
+def save_failed_pdf(url, error_msg):
+    """Enregistre un PDF échoué"""
+    failed = load_failed_pdfs()
+    failed[url] = {
+        "error": str(error_msg),
+        "failed_at": datetime.now().isoformat(),
+        "retry_count": failed.get(url, {}).get("retry_count", 0) + 1
+    }
+    with open(FAILED_PDF_LOG, "w", encoding="utf-8") as f:
+        json.dump(failed, f, indent=2, ensure_ascii=False)
+
+def should_retry_failed_pdf(url, max_retries=3, retry_after_days=7):
+    """Vérifie si un PDF échoué devrait être réessayé"""
+    failed = load_failed_pdfs()
+    if url not in failed:
+        return True
+    
+    retry_count = failed[url].get("retry_count", 0)
+    if retry_count >= max_retries:
+        return False
+    
+    failed_at = datetime.fromisoformat(failed[url]["failed_at"])
+    if datetime.now() - failed_at > timedelta(days=retry_after_days):
+        return True
+    
     return False
 
 # ================================================================
@@ -250,8 +293,7 @@ def download_pdf(url):
         logging.info(f"Téléchargé : {filename}")
         return filename
     else:
-        logging.error(f"Erreur lors du téléchargement de {url}")
-        return None
+        raise Exception(f"Erreur HTTP {response.status_code} lors du téléchargement")
 
 
 def convert_pdf_to_markdown(pdf_path, source_url):
@@ -282,35 +324,45 @@ def convert_pdf_to_markdown(pdf_path, source_url):
         f.write(f"\n\n---\n\n**Source :** [{clean_title}]({source_url})")
 
     logging.info(f"Converti en Markdown : {md_filename}")
-    upload_to_ftp(md_filename)
-    process_chatbot_source(source_url) 
-    torch.cuda.empty_cache()
-    gc.collect()
+    
+    # Upload FTP et intégration chatbot avec gestion d'erreur
+    try:
+        upload_to_ftp(md_filename)
+        process_chatbot_source(source_url)
+    except Exception as e:
+        logging.error(f"Erreur lors de l'intégration : {e}")
+        raise
+    finally:
+        torch.cuda.empty_cache()
+        gc.collect()
 
 
 def process_pdf(url, date):
-    logging.info(f"Traitement du PDF : {url} (Ajouté/Modifié le {date})")
-    pdf_path = download_pdf(url)
-    if pdf_path:
-        try:
-            convert_pdf_to_markdown(pdf_path, url)
-            save_processed_pdf(url, date)  # Enregistrer comme traité
-            check_memory_usage()
-        except Exception as e:
-            logging.error(f"Erreur lors du traitement du PDF {url}: {e}")
-            with open(FAILED_PDF_LOG, "a", encoding="utf-8") as f:
-                f.write(f"{url} - {e}\n")
-    else:
-        logging.error(f"Erreur de téléchargement du PDF {url}")
-        with open(FAILED_PDF_LOG, "a", encoding="utf-8") as f:
-            f.write(f"{url} - Erreur de téléchargement\n")
+    logging.info(f"Traitement du PDF : {url} (Date: {date})")
+    pdf_path = None
+    
+    try:
+        pdf_path = download_pdf(url)
+        convert_pdf_to_markdown(pdf_path, url)
+        save_processed_pdf(url, date)  # Sauvegarder APRÈS succès complet
+        check_memory_usage()
+        logging.info(f"✅ PDF traité avec succès : {url}")
+        
+    except Exception as e:
+        error_msg = f"Erreur lors du traitement du PDF {url}: {e}"
+        logging.error(error_msg)
+        save_failed_pdf(url, error_msg)
+        raise
+    
+    finally:
+        # Nettoyage du fichier temporaire
+        if pdf_path and os.path.exists(pdf_path):
+            try:
+                os.remove(pdf_path)
+                logging.info(f"Fichier temporaire supprimé : {pdf_path}")
+            except Exception as e:
+                logging.warning(f"Impossible de supprimer {pdf_path}: {e}")
 
-def load_failed_pdfs():
-    if os.path.exists(FAILED_PDF_LOG):
-        with open(FAILED_PDF_LOG, "r", encoding="utf-8") as f:
-            failed_urls = [line.split(" - ")[0] for line in f.readlines()]
-        return set(failed_urls)
-    return set()
 
 def main():
     logging.info("--- DÉMARRAGE DU SCRIPT ---")
@@ -323,25 +375,27 @@ def main():
 
     added, changed = compare_sitemaps(old_pdfs, new_pdfs)
     
-    # Charger les PDFs échoués et déjà traités
-    failed_pdfs = load_failed_pdfs()
-    
     # Filtrer les PDFs à traiter
     to_process = {}
     for url, date in {**added, **changed}.items():
-        # Exclure les PDFs échoués
-        if url in failed_pdfs:
-            continue
-        # Exclure les PDFs déjà traités avec la même date
+        # Vérifier si déjà traité avec la même date
         if is_pdf_already_processed(url, date):
             logging.info(f"PDF déjà traité, ignoré : {url}")
             continue
+        
+        # Vérifier si échec récent et ne pas retry
+        if not should_retry_failed_pdf(url):
+            logging.info(f"PDF en échec multiple, ignoré : {url}")
+            continue
+        
         to_process[url] = date
     
     total_pdfs = len(to_process)
     logging.info(f"{total_pdfs} PDF(s) vont être traités")
 
     processed_count = 0
+    failed_count = 0
+    
     for url, date in to_process.items():
         try:
             process_pdf(url, date)
@@ -349,23 +403,24 @@ def main():
             logging.info(f"Progression : {processed_count}/{total_pdfs} PDFs traités")
             time.sleep(5)
         except Exception as e:
-            logging.error(f"Erreur lors du traitement du PDF {url}: {e}")
+            failed_count += 1
+            logging.error(f"Échec du traitement : {e}")
 
     end_time = time.time()
     execution_time = end_time - start_time
+    
+    # Toujours sauvegarder le sitemap (le tracking JSON gère les PDFs)
+    save_sitemap(new_sitemap_content)
+    
     logging.info(f"Temps total d'exécution : {execution_time:.2f} secondes")
-    logging.info(f"PDFs traités dans cette session : {processed_count}/{total_pdfs}")
+    logging.info(f"PDFs traités : {processed_count}/{total_pdfs}")
+    if failed_count > 0:
+        logging.warning(f"PDFs en échec : {failed_count} (voir {FAILED_PDF_LOG})")
     
-    # Sauvegarder le sitemap seulement si tous les PDFs ont été traités
-    if processed_count == total_pdfs:
-        save_sitemap(new_sitemap_content)
-        logging.info("Sitemap mis à jour - Tous les PDFs ont été traités")
-    else:
-        logging.warning(f"Sitemap non mis à jour - {total_pdfs - processed_count} PDFs restants")
-    
-    logging.info("---")
+    logging.info("--- FIN DU SCRIPT ---")
     upload_to_ftp("logs.log")
-    upload_to_ftp(PROCESSED_PDF_LOG)  # Upload du fichier de tracking
+    upload_to_ftp(PROCESSED_PDF_LOG)
+    upload_to_ftp(FAILED_PDF_LOG)
     suspendInstance()
 
 if __name__ == "__main__":
