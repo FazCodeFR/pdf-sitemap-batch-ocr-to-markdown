@@ -19,6 +19,7 @@ import json
 import sys
 import fcntl
 import atexit
+from urllib.parse import unquote
 
 
 # ============================================
@@ -53,6 +54,7 @@ FTP_PASS = os.getenv("FTP_PASS")
 FTP_DIR = "/markdown"
 FAILED_PDF_LOG = "failed_pdfs.json"
 PROCESSED_PDF_LOG = "processed_pdfs.json"
+REMOVED_PDF_LOG = "removed_pdfs.json"  # Nouveau: tracking des PDFs supprimés
 CHATBOT_ID = os.getenv("CHATBOT_ID")
 BEARER_TOKEN = os.getenv("BEARER_TOKEN")
 BASE_URL = os.getenv("BASE_URL")
@@ -99,7 +101,8 @@ def release_lock():
         try:
             fcntl.flock(_lock_fd.fileno(), fcntl.LOCK_UN)
             _lock_fd.close()
-            os.remove(LOCK_FILE)
+            if os.path.exists(LOCK_FILE):
+                os.remove(LOCK_FILE)
             logging.info("Lock libéré")
         except Exception as e:
             logging.warning(f"Erreur lors de la libération du lock: {e}")
@@ -113,16 +116,20 @@ def get_clean_filename(url):
     """Extrait et nettoie le nom de fichier depuis l'URL (fonction centralisée)"""
     raw_filename = url.split("&ind=")[-1]
     # Decode URL encoding si présent
-    from urllib.parse import unquote
     raw_filename = unquote(raw_filename)
     # Supprime le préfixe numérique wpdm_ si présent
     return re.sub(r"^\d+wpdm_", "", raw_filename)
 
 
-def get_markdown_path(pdf_url):
-    """Retourne le chemin du fichier markdown pour un PDF donné"""
+def get_markdown_filename(pdf_url):
+    """Retourne le nom du fichier markdown pour un PDF donné"""
     clean_filename = get_clean_filename(pdf_url)
-    return os.path.join(MARKDOWN_FOLDER, clean_filename.replace(".pdf", ".md"))
+    return clean_filename.replace(".pdf", ".md")
+
+
+def get_markdown_path(pdf_url):
+    """Retourne le chemin complet du fichier markdown pour un PDF donné"""
+    return os.path.join(MARKDOWN_FOLDER, get_markdown_filename(pdf_url))
 
 
 def suspendInstance():
@@ -218,6 +225,46 @@ def upload_to_ftp(file_path, max_retries=3):
     
     logging.error(f"Upload FTP définitivement échoué pour {file_path}")
     return False
+
+
+def delete_from_ftp(filename, max_retries=3):
+    """Supprime un fichier du serveur FTP avec retry"""
+    for attempt in range(max_retries):
+        try:
+            with FTP(FTP_HOST, timeout=FTP_TIMEOUT) as ftp:
+                ftp.login(FTP_USER, FTP_PASS)
+                ftp.cwd(FTP_DIR)
+                
+                # Vérifier si le fichier existe
+                file_list = ftp.nlst()
+                if filename not in file_list:
+                    logging.info(f"Fichier FTP déjà absent: {filename}")
+                    return True
+                
+                # Supprimer le fichier
+                ftp.delete(filename)
+                logging.info(f"Fichier FTP supprimé: {filename}")
+                return True
+                
+        except Exception as e:
+            logging.error(f"Échec suppression FTP (tentative {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(5)
+    
+    logging.error(f"Suppression FTP définitivement échouée pour {filename}")
+    return False
+
+
+def list_ftp_files():
+    """Liste tous les fichiers sur le serveur FTP"""
+    try:
+        with FTP(FTP_HOST, timeout=FTP_TIMEOUT) as ftp:
+            ftp.login(FTP_USER, FTP_PASS)
+            ftp.cwd(FTP_DIR)
+            return ftp.nlst()
+    except Exception as e:
+        logging.error(f"Erreur lors du listing FTP: {e}")
+        return []
 
 
 # ============================================
@@ -368,6 +415,12 @@ def load_processed_pdfs():
     return {}
 
 
+def save_processed_pdfs(processed):
+    """Sauvegarde le dictionnaire des PDFs traités"""
+    with open(PROCESSED_PDF_LOG, "w", encoding="utf-8") as f:
+        json.dump(processed, f, indent=2, ensure_ascii=False)
+
+
 def save_processed_pdf(url, date):
     """Enregistre un PDF comme traité avec sa date"""
     processed = load_processed_pdfs()
@@ -376,9 +429,18 @@ def save_processed_pdf(url, date):
         "processed_at": datetime.now().isoformat(),
         "filename": get_clean_filename(url)
     }
-    with open(PROCESSED_PDF_LOG, "w", encoding="utf-8") as f:
-        json.dump(processed, f, indent=2, ensure_ascii=False)
+    save_processed_pdfs(processed)
     logging.info(f"PDF enregistré comme traité : {get_clean_filename(url)}")
+
+
+def remove_processed_pdf(url):
+    """Retire un PDF de la liste des PDFs traités"""
+    processed = load_processed_pdfs()
+    if url in processed:
+        del processed[url]
+        save_processed_pdfs(processed)
+        return True
+    return False
 
 
 def is_pdf_already_processed(url, current_date):
@@ -401,6 +463,12 @@ def load_failed_pdfs():
     return {}
 
 
+def save_failed_pdfs(failed):
+    """Sauvegarde le dictionnaire des PDFs échoués"""
+    with open(FAILED_PDF_LOG, "w", encoding="utf-8") as f:
+        json.dump(failed, f, indent=2, ensure_ascii=False)
+
+
 def save_failed_pdf(url, error_msg):
     """Enregistre un PDF échoué"""
     failed = load_failed_pdfs()
@@ -411,8 +479,7 @@ def save_failed_pdf(url, error_msg):
         "retry_count": retry_count,
         "filename": get_clean_filename(url)
     }
-    with open(FAILED_PDF_LOG, "w", encoding="utf-8") as f:
-        json.dump(failed, f, indent=2, ensure_ascii=False)
+    save_failed_pdfs(failed)
     logging.info(f"PDF enregistré comme échoué (tentative {retry_count}): {get_clean_filename(url)}")
 
 
@@ -421,8 +488,7 @@ def remove_from_failed(url):
     failed = load_failed_pdfs()
     if url in failed:
         del failed[url]
-        with open(FAILED_PDF_LOG, "w", encoding="utf-8") as f:
-            json.dump(failed, f, indent=2, ensure_ascii=False)
+        save_failed_pdfs(failed)
         logging.info(f"PDF retiré de la liste des échecs : {get_clean_filename(url)}")
 
 
@@ -446,6 +512,29 @@ def should_retry_failed_pdf(url, max_retries=3, retry_after_days=7):
         return True
     
     return False
+
+
+def load_removed_pdfs():
+    """Charge l'historique des PDFs supprimés"""
+    if os.path.exists(REMOVED_PDF_LOG):
+        try:
+            with open(REMOVED_PDF_LOG, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def save_removed_pdf(url, cleanup_result):
+    """Enregistre un PDF comme supprimé avec le résultat du nettoyage"""
+    removed = load_removed_pdfs()
+    removed[url] = {
+        "filename": get_clean_filename(url),
+        "removed_at": datetime.now().isoformat(),
+        "cleanup": cleanup_result
+    }
+    with open(REMOVED_PDF_LOG, "w", encoding="utf-8") as f:
+        json.dump(removed, f, indent=2, ensure_ascii=False)
 
 
 # ============================================
@@ -522,11 +611,121 @@ def compare_sitemaps(old_pdfs, new_pdfs):
     """Compare deux sitemaps et retourne les changements"""
     added = {url: date for url, date in new_pdfs.items() if url not in old_pdfs}
     changed = {url: date for url, date in new_pdfs.items() if url in old_pdfs and old_pdfs[url] != date}
-    removed = {url: date for url, date in old_pdfs.items() if url not in new_pdfs}
+    removed = {url: old_pdfs[url] for url in old_pdfs if url not in new_pdfs}
     
     logging.info(f"Comparaison sitemap: {len(added)} ajoutés, {len(changed)} modifiés, {len(removed)} supprimés")
     
     return added, changed, removed
+
+
+# ============================================
+# GESTION DES PDFS SUPPRIMÉS
+# ============================================
+
+def handle_removed_pdfs(removed_urls):
+    """
+    Gère les PDFs supprimés du sitemap avec nettoyage complet:
+    1. Suppression de la source chatbot
+    2. Suppression du fichier markdown local
+    3. Suppression du fichier markdown sur FTP
+    4. Mise à jour du tracking JSON
+    """
+    if not removed_urls:
+        logging.info("Aucun PDF supprimé à traiter")
+        return
+    
+    logging.info(f"{'='*50}")
+    logging.info(f"TRAITEMENT DES {len(removed_urls)} PDF(S) SUPPRIMÉ(S)")
+    logging.info(f"{'='*50}")
+    
+    # Récupérer les sources du chatbot une seule fois
+    sources = get_sources()
+    if sources is None:
+        logging.warning("Impossible de récupérer les sources du chatbot - nettoyage partiel")
+    
+    success_count = 0
+    partial_count = 0
+    
+    for url in removed_urls:
+        clean_filename = get_clean_filename(url)
+        md_filename = get_markdown_filename(url)
+        
+        logging.info(f"\n🗑️ Nettoyage: {clean_filename}")
+        
+        cleanup_result = {
+            "chatbot_source": False,
+            "local_file": False,
+            "ftp_file": False,
+            "tracking": False
+        }
+        
+        # 1. Supprimer la source du chatbot
+        if sources:
+            source = find_source_by_keyword(sources, clean_filename)
+            if source:
+                if delete_source(source["id"]):
+                    logging.info(f"  ✓ Source chatbot supprimée: {source['id']}")
+                    cleanup_result["chatbot_source"] = True
+                else:
+                    logging.warning(f"  ✗ Échec suppression source chatbot: {source['id']}")
+            else:
+                logging.info(f"  ○ Pas de source chatbot trouvée")
+                cleanup_result["chatbot_source"] = True  # Pas d'erreur, juste absent
+        
+        # 2. Supprimer le fichier markdown local
+        md_path = get_markdown_path(url)
+        if os.path.exists(md_path):
+            try:
+                os.remove(md_path)
+                logging.info(f"  ✓ Fichier local supprimé: {md_path}")
+                cleanup_result["local_file"] = True
+            except Exception as e:
+                logging.warning(f"  ✗ Impossible de supprimer le fichier local: {e}")
+        else:
+            logging.info(f"  ○ Fichier local déjà absent")
+            cleanup_result["local_file"] = True  # Pas d'erreur, juste absent
+        
+        # 3. Supprimer le fichier sur FTP
+        if delete_from_ftp(md_filename):
+            logging.info(f"  ✓ Fichier FTP supprimé: {md_filename}")
+            cleanup_result["ftp_file"] = True
+        else:
+            logging.warning(f"  ✗ Échec suppression fichier FTP")
+        
+        # 4. Retirer du tracking JSON (processed_pdfs.json)
+        if remove_processed_pdf(url):
+            logging.info(f"  ✓ Retiré du tracking (processed)")
+            cleanup_result["tracking"] = True
+        else:
+            logging.info(f"  ○ Pas dans le tracking (processed)")
+            cleanup_result["tracking"] = True
+        
+        # 5. Retirer aussi de failed_pdfs.json si présent
+        failed = load_failed_pdfs()
+        if url in failed:
+            del failed[url]
+            save_failed_pdfs(failed)
+            logging.info(f"  ✓ Retiré du tracking (failed)")
+        
+        # 6. Enregistrer dans l'historique des suppressions
+        save_removed_pdf(url, cleanup_result)
+        
+        # Évaluer le résultat
+        all_success = all(cleanup_result.values())
+        any_success = any(cleanup_result.values())
+        
+        if all_success:
+            logging.info(f"  ✅ Nettoyage complet réussi")
+            success_count += 1
+        elif any_success:
+            logging.warning(f"  ⚠️ Nettoyage partiel")
+            partial_count += 1
+        else:
+            logging.error(f"  ❌ Nettoyage échoué")
+    
+    logging.info(f"\n{'='*50}")
+    logging.info(f"RÉSUMÉ SUPPRESSIONS: {success_count} complets, {partial_count} partiels, {len(removed_urls) - success_count - partial_count} échoués")
+    logging.info(f"{'='*50}")
 
 
 # ============================================
@@ -680,34 +879,6 @@ def process_pdf(url, date):
                 logging.warning(f"Impossible de supprimer {pdf_path}: {e}")
 
 
-def handle_removed_pdfs(removed_urls):
-    """Gère les PDFs supprimés du sitemap (optionnel: supprimer les sources)"""
-    if not removed_urls:
-        return
-    
-    logging.info(f"Traitement de {len(removed_urls)} PDF(s) supprimé(s) du sitemap")
-    
-    sources = get_sources()
-    if not sources:
-        logging.warning("Impossible de récupérer les sources pour nettoyer les PDFs supprimés")
-        return
-    
-    for url in removed_urls:
-        clean_filename = get_clean_filename(url)
-        source = find_source_by_keyword(sources, clean_filename)
-        
-        if source:
-            logging.info(f"Suppression de la source pour PDF retiré: {clean_filename}")
-            delete_source(source["id"])
-        
-        # Retirer du tracking
-        processed = load_processed_pdfs()
-        if url in processed:
-            del processed[url]
-            with open(PROCESSED_PDF_LOG, "w", encoding="utf-8") as f:
-                json.dump(processed, f, indent=2, ensure_ascii=False)
-
-
 # ============================================
 # FONCTION PRINCIPALE
 # ============================================
@@ -715,6 +886,7 @@ def handle_removed_pdfs(removed_urls):
 def main():
     logging.info("=" * 60)
     logging.info("DÉMARRAGE DU SCRIPT PDF CONVERTER")
+    logging.info(f"Date/Heure: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logging.info("=" * 60)
     
     # Acquérir le lock
@@ -753,8 +925,14 @@ def main():
     # Comparer
     added, changed, removed = compare_sitemaps(old_pdfs, new_pdfs)
     
-    # Gérer les PDFs supprimés
+    # ============================================
+    # ÉTAPE 1: Gérer les PDFs supprimés
+    # ============================================
     handle_removed_pdfs(removed)
+    
+    # ============================================
+    # ÉTAPE 2: Traiter les nouveaux/modifiés
+    # ============================================
     
     # Filtrer les PDFs à traiter
     to_process = {}
@@ -772,8 +950,8 @@ def main():
         to_process[url] = date
     
     total_pdfs = len(to_process)
-    logging.info(f"{'='*50}")
-    logging.info(f"PDFs à traiter: {total_pdfs}")
+    logging.info(f"\n{'='*50}")
+    logging.info(f"PDFs À TRAITER: {total_pdfs}")
     logging.info(f"{'='*50}")
     
     if total_pdfs == 0:
@@ -799,7 +977,7 @@ def main():
                 time.sleep(5)
         
         logging.info(f"\n{'='*50}")
-        logging.info(f"RÉSUMÉ: {processed_count}/{total_pdfs} PDFs traités avec succès")
+        logging.info(f"RÉSUMÉ TRAITEMENT: {processed_count}/{total_pdfs} PDFs traités avec succès")
         if failed_count > 0:
             logging.warning(f"⚠️ {failed_count} PDF(s) en échec (voir {FAILED_PDF_LOG})")
     
@@ -821,6 +999,8 @@ def main():
         upload_to_ftp(PROCESSED_PDF_LOG)
     if os.path.exists(FAILED_PDF_LOG):
         upload_to_ftp(FAILED_PDF_LOG)
+    if os.path.exists(REMOVED_PDF_LOG):
+        upload_to_ftp(REMOVED_PDF_LOG)
     
     # Suspendre l'instance
     suspendInstance()
