@@ -289,11 +289,17 @@ def get_sources():
     return None
 
 
-def find_source_by_keyword(sources, keyword):
-    """Recherche une source contenant un mot-clé dans son URL"""
-    if not sources:
-        return None
-    return next((s for s in sources if keyword in s.get("url", "")), None)
+def extract_wpdmdl(url):
+    """Extrait l'ID wpdmdl stable d'une URL (ignore le filename &ind=)"""
+    match = re.search(r"wpdmdl=(\d+)", url or "")
+    return match.group(1) if match else None
+
+
+def find_sources_by_wpdmdl(sources, wpdmdl_id):
+    """Retourne TOUTES les sources matchant ce wpdmdl (gère les doublons existants)"""
+    if not sources or not wpdmdl_id:
+        return []
+    return [s for s in sources if extract_wpdmdl(s.get("url", "")) == wpdmdl_id]
 
 
 def delete_source(source_id):
@@ -352,48 +358,51 @@ def create_source(url, markdown_content):
     return False
 
 
-def verify_source_added(keyword, max_retries=3):
-    """Vérifie que la nouvelle source a bien été ajoutée"""
+def verify_source_added(wpdmdl_id, max_retries=3):
+    """Vérifie que la nouvelle source a bien été ajoutée (match par wpdmdl)"""
     for attempt in range(max_retries):
         time.sleep(2)  # Attendre que l'API se synchronise
         sources = get_sources()
-        if sources and find_source_by_keyword(sources, keyword):
+        if sources and find_sources_by_wpdmdl(sources, wpdmdl_id):
             logging.info("Vérification réussie : la source est bien présente")
             return True
         if attempt < max_retries - 1:
             logging.info(f"Vérification en cours... (tentative {attempt + 2}/{max_retries})")
-    
+
     logging.error("Vérification échouée : la source n'a pas été ajoutée")
     return False
 
 
 def process_chatbot_source(pdf_url):
-    """Gère l'ajout/mise à jour de la source dans le chatbot"""
+    """Gère l'ajout/mise à jour de la source dans le chatbot (match par wpdmdl stable)"""
+    wpdmdl_id = extract_wpdmdl(pdf_url)
+    if not wpdmdl_id:
+        raise Exception(f"Impossible d'extraire wpdmdl de {pdf_url}")
     clean_filename = get_clean_filename(pdf_url)
-    
+
     sources = get_sources()
     if sources is None:
         raise Exception("Impossible de récupérer les sources du chatbot")
 
-    # Chercher si une source existe déjà
-    source_to_reset = find_source_by_keyword(sources, clean_filename)
-    if source_to_reset:
-        source_id = source_to_reset["id"]
-        logging.info(f"Source existante trouvée : {source_id}")
+    # Chercher TOUTES les sources existantes avec ce wpdmdl (gère doublons pré-existants)
+    existing = find_sources_by_wpdmdl(sources, wpdmdl_id)
+    for src in existing:
+        source_id = src["id"]
+        logging.info(f"Source existante trouvée (wpdmdl={wpdmdl_id}) : {source_id}")
         if not delete_source(source_id):
             logging.warning(f"Échec suppression source {source_id}, tentative de création quand même")
-    
+
     # Lire le contenu markdown
     markdown_content = read_markdown_content(pdf_url)
     if not markdown_content:
         raise Exception(f"Contenu Markdown vide ou inexistant pour {pdf_url}")
-    
+
     # Créer la nouvelle source
     if not create_source(pdf_url, markdown_content):
         raise Exception(f"Échec de création de la source pour {pdf_url}")
-    
+
     # Vérifier l'ajout
-    if not verify_source_added(clean_filename):
+    if not verify_source_added(wpdmdl_id):
         raise Exception(f"Source non vérifiée pour {pdf_url}")
     
     logging.info(f"✅ Source chatbot mise à jour pour {clean_filename}")
@@ -659,17 +668,21 @@ def handle_removed_pdfs(removed_urls):
             "tracking": False
         }
         
-        # 1. Supprimer la source du chatbot
+        # 1. Supprimer la source du chatbot (tous les doublons wpdmdl)
         if sources:
-            source = find_source_by_keyword(sources, clean_filename)
-            if source:
-                if delete_source(source["id"]):
-                    logging.info(f"  ✓ Source chatbot supprimée: {source['id']}")
-                    cleanup_result["chatbot_source"] = True
-                else:
-                    logging.warning(f"  ✗ Échec suppression source chatbot: {source['id']}")
+            wpdmdl_id = extract_wpdmdl(url)
+            matches = find_sources_by_wpdmdl(sources, wpdmdl_id) if wpdmdl_id else []
+            if matches:
+                all_deleted = True
+                for src in matches:
+                    if delete_source(src["id"]):
+                        logging.info(f"  ✓ Source chatbot supprimée: {src['id']}")
+                    else:
+                        logging.warning(f"  ✗ Échec suppression source chatbot: {src['id']}")
+                        all_deleted = False
+                cleanup_result["chatbot_source"] = all_deleted
             else:
-                logging.info(f"  ○ Pas de source chatbot trouvée")
+                logging.info(f"  ○ Pas de source chatbot trouvée (wpdmdl={wpdmdl_id})")
                 cleanup_result["chatbot_source"] = True  # Pas d'erreur, juste absent
         
         # 2. Supprimer le fichier markdown local
